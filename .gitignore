@@ -1,0 +1,35 @@
+# python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# env
+.env
+*.env
+
+# database
+*.db
+*.sqlite3
+
+# node
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# misc
+.DS_Store
+Thumbs.db
+*.log
+
+# PDFs (large files — add to data/ folder locally but don't commit)
+data/
+
+# kiro
+.kiro/
