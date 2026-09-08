@@ -94,7 +94,7 @@ export default function Landing() {
         <div className="space-y-6">
           <div className="inline-flex items-center gap-2 bg-sea-50 border border-sea-200 text-sea-700 text-xs font-semibold px-3 py-1.5 rounded-full">
             <span className="w-1.5 h-1.5 rounded-full bg-sea-500"/>
-            Superjoin VIT 2026 · Engineering Intern
+            Superjoin VIT 2026 · Engineering Intern Assessment
           </div>
 
           <h1 className="text-5xl font-extrabold text-gray-900 leading-tight tracking-tight">
@@ -184,7 +184,7 @@ export default function Landing() {
 
       {/* ── footer ── */}
       <footer className="border-t border-gray-100 py-5 text-center text-xs text-gray-400">
-        Built by Smriti Prajapati · Superjoin Engineering Intern Assignment 2026
+        Built by Smriti Prajapati
       </footer>
     </div>
   );
