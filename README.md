@@ -1,236 +1,93 @@
 # FactLens
 
-A fact extraction and cross-document linking system for financial/economic PDFs.
+Extract facts from PDFs, link them to source evidence, and find where they agree, conflict, or need context to make sense.
 
-Upload PDFs → Claude extracts structured facts → sentence-transformers finds candidate pairs → Claude classifies each relationship as **corroborates**, **contradicts**, or **reconciled by context**.
-
-Built for the Superjoin intern assignment.
+Built for the Superjoin VIT 2026 Engineering Intern assignment.
 
 ---
 
-## Architecture
+## Demo
 
-```
-data/               ← put your PDFs here before running
-backend/
-  main.py           ← FastAPI app (REST API)
-  pipeline.py       ← orchestrates extraction → storage → linking
-  extract_pdf.py    ← PyMuPDF chunker (preserves page numbers)
-  llm_extract.py    ← Anthropic tool-use extraction + LLM reconciler
-  embeddings.py     ← sentence-transformers candidate matching
-  normalize.py      ← period (FY24) and unit (INR_CR) normalization
-  db.py             ← SQLite schema: documents, facts, relationships
-  ingest_all.py     ← batch ingestion CLI
-frontend/
-  src/
-    App.jsx                      ← main layout + polling
-    api/client.js                ← fetch wrapper
-    components/
-      UploadZone.jsx             ← drag-and-drop PDF upload
-      FactCard.jsx               ← fact list item
-      EvidencePanel.jsx          ← evidence + linked facts sidebar
-      RelationshipsPanel.jsx     ← cross-doc relationship browser
-      RelationshipBadge.jsx      ← corroborates / contradicts / reconciled
-      FactTypeBadge.jsx          ← colour-coded fact type label
-verify_backend.py   ← 39-test verification suite (run to check setup)
-```
-
-### Pipeline flow
-
-```
-PDF
- └─ extract_pdf.py     → chunks (page number, text, type)
- └─ llm_extract.py     → structured facts via Claude tool use
- └─ normalize.py       → period_normalized, unit normalization
- └─ db.py              → INSERT into facts
- └─ embeddings.py      → all-MiniLM-L6-v2 embeddings → candidate pairs
- └─ llm_extract.py     → reconcile_fact_pair → relationship classification
- └─ db.py              → INSERT into relationships
-```
-
----
-
-## Requirements
-
-- Python 3.13
-- Node.js 18+
-- An Anthropic API key
-
-No Visual Studio Build Tools needed — all Python packages install from pre-built wheels.
+> **[add your demo video link here]**
 
 ---
 
 ## Setup
 
-### 1. Clone and create .env
+**You need:** Python 3.13, Node.js 18+, a free [Cohere API key](https://dashboard.cohere.com) (no card needed)
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/Smriti-Prajapati/superjoin-assessment.git
 cd superjoin-assessment
 cp .env.example .env
-# edit .env and set ANTHROPIC_API_KEY=sk-ant-...
+# open .env and paste your COHERE_API_KEY
 ```
 
-### 2. Python environment
-
-```powershell
+**Backend:**
+```bash
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+.venv\Scripts\python.exe -m pip install -r backend/requirements.txt --only-binary=:all:
 ```
 
-If you hit a build error on `pydantic-core`, install pydantic separately first:
-```powershell
-.venv\Scripts\python.exe -m pip install pydantic==2.10.6 --only-binary=:all:
-.venv\Scripts\python.exe -m pip install -r backend\requirements.txt --only-binary=:all:
+**Frontend:**
+```bash
+cd frontend && npm install
 ```
 
-### 3. Frontend
+**Run:**
+```bash
+# terminal 1
+cd backend && ..\venv\Scripts\python.exe -m uvicorn main:app --port 8000
 
-```powershell
-cd frontend
-npm install
-cd ..
+# terminal 2
+cd frontend && npm run dev
 ```
 
-### 4. Verify setup
+Open **http://localhost:5173**, drag PDFs onto the upload zone. Facts appear as they're extracted — no need to wait for the whole doc.
 
-```powershell
-.venv\Scripts\python.exe verify_backend.py
-# Expected: Results: 39/39 passed  [ALL PASS]
-```
+For batch processing: `python backend/ingest_all.py`
 
 ---
 
-## Running
+## The Four Cases
 
-### Start the backend
+All visible in the **Relationships** tab after processing the PDFs.
 
-```powershell
-cd backend
-..\venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000
-```
+**1. Corroborated** — Delhivery's market share and shipment volume numbers appear in both the IPO prospectus and the FY24 annual report. Same entity, same metric, consistent numbers → marked corroborates.
 
-Or from the project root:
-```powershell
-.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --port 8000
-```
+**2. Contradicted** — A metric stated at two genuinely different values across documents with no period, scope, or unit difference to explain it. The UI shows 2 contradicted pairs.
 
-### Start the frontend
+**3. Reconciled by context** — The largest group (200+ pairs). Examples: Delhivery standalone revenue (₹74,540 mn) vs consolidated (₹81,415 mn) — explained by scope. FY23 vs FY24 figures for the same metric — explained by period. The reconciler is required to name the specific field in its explanation, it won't just say "reconciled" without a reason.
 
-In a second terminal:
-```powershell
-cd frontend
-npm run dev
-# opens at http://localhost:5173
-```
+**4. Extraction failure, documented** — `verify_facts.py` found that ~10/20 sampled facts had wrong page numbers. The evidence snippet is always verbatim and correct, but the page number can be off. Root cause: the LLM extracts from batches of 30 chunks spanning multiple pages, and the page-attribution heuristic fails when snippets don't match chunk text exactly. I improved the search (progressive needle lengths + word-frequency fallback) but the fix only applies to new ingestions. What I'd do properly: ask the LLM to return which `[Page N]` marker the evidence came from.
 
 ---
 
-## Ingesting PDFs
+## Approach
 
-### Option A — Drag and drop in the UI
+PDFs → PyMuPDF chunks (≤800 chars, page numbers preserved) → filter to fact-dense chunks → Cohere Chat extracts structured facts in batches → Cohere Embed finds candidate pairs → Cohere Chat classifies each pair as corroborates / contradicts / reconciled / related → stored in SQLite.
 
-Open http://localhost:5173, drag PDFs onto the upload zone. Extraction runs in the background (check backend terminal for progress logs).
+**Things I thought about:**
 
-### Option B — Batch ingest from CLI
-
-Copy PDFs into the `data/` folder first:
-```
-data/
-  delhivery/
-    delhivery-annual-report-fy24.pdf
-    delhivery-ipo-prospectus.pdf
-    ...
-  india-macroeconomy/
-    india-economic-survey-2024-25.pdf
-    rbi-annual-report-2024-25.pdf
-    imf-india-article-iv-2025.pdf
-```
-
-Then run:
-```powershell
-cd backend
-..\venv\Scripts\python.exe ingest_all.py
-```
-
-The pipeline processes documents sequentially and prints progress:
-```
-Processing: delhivery-annual-report-fy24.pdf
-[pipeline] ingesting delhivery-annual-report-fy24.pdf (94 pages, rounding=True)
-[pipeline] 1240 chunks extracted
-[pipeline] 187 raw facts from LLM
-[pipeline] 183 facts stored
-[pipeline] 45 candidate pairs
-[pipeline] 31 relationships stored
-```
+- **Two-pass instead of all-pairs** — embeddings cheaply find candidates, LLM only runs on those. Keeps API calls to O(k·n) not O(n²).
+- **Incremental** — new doc only compares against existing facts, never rebuilds. Adding doc 6 doesn't re-process docs 1–5.
+- **Dynamic fact types** — the LLM can propose new types (it's not a fixed enum). Works on any domain without code changes.
+- **Four relationship types not three** — added `related` for facts that share a subject but aren't actually comparable (different transactions, different metrics). Without this, the reconciler mislabels unrelated facts as "reconciled".
+- **Serialized queue** — one PDF at a time so two docs don't race on the Cohere rate limit.
+- **SQLite not a graph DB** — the assignment explicitly says graph DB alone isn't the answer. A relationships table with fact_id_a/b is sufficient for everything needed here.
 
 ---
 
-## API reference
+## Limitations and what I'd fix
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/documents` | List all ingested documents |
-| POST | `/documents` | Upload a PDF (multipart) — async processing |
-| POST | `/documents/path` | Ingest PDF already on disk `{"filepath": "..."}` |
-| GET | `/documents/{id}/facts` | All facts for a document |
-| GET | `/facts` | List facts — filter by `fact_type`, `entity`, `period`, `source_doc` |
-| GET | `/facts/{id}` | Single fact |
-| GET | `/facts/{id}/relationships` | All relationships for a fact |
-| GET | `/relationships` | List relationships — filter by `relationship_type` |
+- Page numbers are sometimes wrong (~50% in a sample) — evidence text is always correct
+- Scanned/image PDFs won't work — text layer only
+- Cohere free tier is 10 calls/min so a 100-page PDF takes 3–5 minutes
+- Some `reconciled` pairs should probably be `related` — the prompt is better now but not perfect
+- No deduplication — the same fact can get extracted twice if it appears in two overlapping chunks
 
-Interactive docs at http://localhost:8000/docs
-
----
-
-## Design decisions
-
-**SQLite over a graph DB** — the assignment says don't use a graph DB as core storage. SQLite is self-contained, works on Render/Railway free tier, and a `relationships` join table is enough for cross-document linking.
-
-**Two-pass architecture** — embeddings (all-MiniLM-L6-v2) find candidate pairs cheaply; the LLM makes the actual relationship decision. This keeps LLM call count bounded.
-
-**Incremental ingestion** — adding a new document only computes relationships between new facts and existing facts, not the full cross-product.
-
-**Temporal reconciliation** — the reconciler is explicitly told to check `as_of_date`, `period`, `scope`, `estimate_or_actual`, and rounding disclaimers before classifying something as a contradiction. A director "active as of March 31" and "resigned July 1" → `reconciled_by_context`, not `contradicts`.
-
-**No hardcoded facts** — all facts are extracted generically. The normalization layer ensures "81,415 INR million" and "8,141.5 INR Cr" map to the same base value for comparison.
-
----
-
-## Relationship types
-
-| Type | Meaning |
-|------|---------|
-| `corroborates` | Both facts state the same underlying thing (unit conversion and minor label differences accepted) |
-| `contradicts` | Genuine conflict that cannot be explained by any contextual factor |
-| `reconciled_by_context` | Facts look different but the difference is explained by scope (standalone vs consolidated), period, estimate vs actual, as-of date, or rounding disclaimer |
-
----
-
-## Free deployment
-
-**Render (recommended)**
-
-Backend:
-- New → Web Service → connect repo
-- Build command: `pip install -r backend/requirements.txt`
-- Start command: `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
-- Add env var: `ANTHROPIC_API_KEY`
-
-Frontend:
-- New → Static Site → connect repo
-- Build command: `cd frontend && npm install && npm run build`
-- Publish directory: `frontend/dist`
-- Add env var: `VITE_API_URL=https://your-backend.onrender.com`
-
-SQLite file persists on Render's free tier ephemeral disk. For persistence across deploys, add a Render disk or switch `DB_PATH` to `/var/data/factlens.db`.
-
-**Railway** — same pattern, add a volume at `/app/data` and set `DB_PATH=/app/data/factlens.db`.
-
----
-
-## Known limitations
-
-- sentence-transformers downloads `all-MiniLM-L6-v2` (~90MB) on first run
-- Large PDFs (100+ pages) take several minutes to process — the UI polls every 8s and updates automatically
-- Free-tier Render instances sleep after 15 min of inactivity; first request after sleep is slow
+**Next up:**
+- Better page attribution by returning `[Page N]` markers from the LLM
+- Fact deduplication before storage
+- Human feedback to correct wrong relationship labels
+- Export to JSON/CSV
