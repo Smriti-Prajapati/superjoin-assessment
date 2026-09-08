@@ -169,7 +169,7 @@ export default function AppPage() {
               <h3 className="font-semibold text-gray-900">Add PDFs</h3>
               <button onClick={()=>setShowUpload(false)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
             </div>
-            <UploadZone onUploaded={()=>{ loadDocuments(); loadFacts(); setShowUpload(false); }}/>
+            <UploadZone onUploaded={()=>{ loadDocuments(); loadFacts(); setTimeout(()=>setShowUpload(false), 1500); }}/>
           </div>
         </div>
       )}
