@@ -205,11 +205,32 @@ def _parse_facts(raw: str, source_doc: str, chunks: list[Chunk]) -> list[dict]:
 def _find_page(snippet: str, chunks: list[Chunk]) -> int | None:
     if not snippet or not chunks:
         return chunks[0].page if chunks else None
-    needle = snippet[:60].lower()
+
+    snippet_lower = snippet.lower().strip()
+
+    # try progressively shorter needles until we get a match
+    for length in [80, 50, 30, 15]:
+        needle = snippet_lower[:length]
+        if not needle.strip():
+            continue
+        for c in chunks:
+            if needle in c.text.lower():
+                return c.page
+
+    # fallback: find which page has the most words from the snippet
+    words = set(snippet_lower.split())
+    if len(words) < 3:
+        return chunks[0].page
+    best_page, best_score = chunks[0].page, 0
+    page_scores: dict[int, int] = {}
     for c in chunks:
-        if needle[:40] in c.text.lower():
-            return c.page
-    return chunks[0].page
+        txt = c.text.lower()
+        score = sum(1 for w in words if w in txt)
+        if score > page_scores.get(c.page, 0):
+            page_scores[c.page] = score
+    if page_scores:
+        best_page = max(page_scores, key=page_scores.get)  # type: ignore
+    return best_page
 
 
 # ── reconciliation ────────────────────────────────────────────────────────────
@@ -234,18 +255,30 @@ def reconcile_fact_pair(fact_a: dict, fact_b: dict) -> dict:
         "Classify the relationship between these two facts.\n\n"
         f"Fact A:\n{_fmt(fact_a)}\n\n"
         f"Fact B:\n{_fmt(fact_b)}\n\n"
-        "Relationship types:\n"
-        "- corroborates: same underlying fact (unit conversion or minor labels ok)\n"
-        "- contradicts: genuine conflict unexplainable by scope/period/vintage/rounding\n"
-        "- reconciled_by_context: difference explained by scope, period, estimate vs actual, as-of date, or rounding\n\n"
-        'Return ONLY: {"relationship_type": "...", "explanation": "one sentence", "confidence": 0.85}'
+        "Relationship types — pick exactly one:\n"
+        "- corroborates: BOTH facts assert the SAME underlying claim and their values agree (after unit normalisation). "
+        "Must be cross-document confirmation of the same specific figure or event.\n"
+        "- contradicts: The facts assert the SAME claim but give irreconcilably different values — "
+        "and no contextual field (period, scope, unit, as-of date, rounding) can explain the gap.\n"
+        "- reconciled_by_context: The facts appear to conflict but a SPECIFIC contextual field explains the difference. "
+        "You MUST name the field in your explanation (e.g. 'standalone vs consolidated scope', "
+        "'FY23 vs FY24 period', 'advance estimate vs final actual'). "
+        "Do NOT use this for facts that were never in tension.\n"
+        "- related: The facts share a subject or entity but are NOT comparable — they describe different "
+        "transactions, different metrics, or different time windows. No corroboration/contradiction possible. "
+        "Use this instead of reconciled_by_context when the facts simply aren't measuring the same thing.\n\n"
+        "Decision rule: ask 'would these two facts be in conflict if they described the same scope/period?' "
+        "If no, use 'related'. If yes and context resolves it, use 'reconciled_by_context'. "
+        "If yes and context does NOT resolve it, use 'contradicts'. "
+        "If they agree, use 'corroborates'.\n\n"
+        'Return ONLY: {"relationship_type": "...", "explanation": "one sentence naming the specific reason", "confidence": 0.85}'
     )
 
     with _recon_sem:
         raw = _chat(prompt, max_tokens=180)
 
     if not raw:
-        return {"relationship_type": "reconciled_by_context", "explanation": "failed", "confidence": 0.3}
+        return {"relationship_type": "related", "explanation": "failed", "confidence": 0.3}
 
     try:
         raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
@@ -254,9 +287,9 @@ def reconcile_fact_pair(fact_a: dict, fact_b: dict) -> dict:
         if m:
             raw = m.group(0)
         result = json.loads(raw)
-        if result.get("relationship_type") not in ("corroborates", "contradicts", "reconciled_by_context"):
-            result["relationship_type"] = "reconciled_by_context"
+        if result.get("relationship_type") not in ("corroborates", "contradicts", "reconciled_by_context", "related"):
+            result["relationship_type"] = "related"
         return result
     except Exception as e:
         print(f"[llm_extract] reconciler parse error: {e}")
-        return {"relationship_type": "reconciled_by_context", "explanation": "failed", "confidence": 0.3}
+        return {"relationship_type": "related", "explanation": "failed", "confidence": 0.3}

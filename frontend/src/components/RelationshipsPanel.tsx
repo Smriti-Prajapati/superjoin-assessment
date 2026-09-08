@@ -8,12 +8,24 @@ const FILTERS = [
   { value: "corroborates",           label: "corroborates" },
   { value: "contradicts",            label: "contradicts" },
   { value: "reconciled_by_context",  label: "reconciled" },
+  { value: "related",                label: "related" },
 ];
 
-export default function RelationshipsPanel({ onSelectFact }: { onSelectFact?: (f: Partial<Fact>) => void }) {
-  const [rels, setRels] = useState<Relationship[]>([]);
-  const [filter, setFilter] = useState("");
+interface Props {
+  onSelectFact?: (f: Partial<Fact>) => void;
+  externalFilter?: string;
+  onFilterChange?: (f: string) => void;
+}
+
+export default function RelationshipsPanel({ onSelectFact, externalFilter, onFilterChange }: Props) {
+  const [rels, setRels]   = useState<Relationship[]>([]);
+  const [filter, setFilter] = useState(externalFilter ?? "");
   const [loading, setLoading] = useState(true);
+
+  // sync external filter
+  useEffect(() => {
+    if (externalFilter !== undefined) setFilter(externalFilter);
+  }, [externalFilter]);
 
   useEffect(() => {
     setLoading(true);
@@ -21,33 +33,26 @@ export default function RelationshipsPanel({ onSelectFact }: { onSelectFact?: (f
       .then(setRels).catch(console.error).finally(() => setLoading(false));
   }, [filter]);
 
-  const counts = rels.reduce<Record<string, number>>((acc, r) => {
-    acc[r.relationship_type] = (acc[r.relationship_type] ?? 0) + 1;
-    return acc;
-  }, {});
+  function handleFilter(v: string) {
+    setFilter(v);
+    onFilterChange?.(v);
+  }
 
   return (
     <div className="h-full flex flex-col">
+      {/* filter tabs */}
       <div className="flex gap-1.5 p-3 border-b border-hairline flex-wrap flex-shrink-0">
         {FILTERS.map(f => (
-          <button key={f.value} onClick={() => setFilter(f.value)}
+          <button key={f.value} onClick={() => handleFilter(f.value)}
             className={`px-2.5 py-1 rounded text-xs font-medium transition-colors focus:outline-none ${
-              filter === f.value ? "bg-sea-600 text-white" : "bg-white border border-hairline text-gray-600 hover:border-sea-400"
+              filter === f.value
+                ? "bg-sea-600 text-white"
+                : "bg-white border border-hairline text-gray-600 hover:border-sea-400"
             }`}>
             {f.label}
           </button>
         ))}
       </div>
-
-      {!loading && rels.length > 0 && !filter && (
-        <div className="flex gap-2 px-3 py-2 border-b border-hairline flex-wrap flex-shrink-0">
-          {Object.entries(counts).map(([type, n]) => (
-            <button key={type} onClick={() => setFilter(type)} className="text-xs text-gray-500 hover:text-gray-800 underline">
-              {n} {type.replace(/_/g, " ")}
-            </button>
-          ))}
-        </div>
-      )}
 
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {loading && <p className="text-xs text-gray-400 text-center py-8">loading…</p>}
@@ -63,7 +68,7 @@ export default function RelationshipsPanel({ onSelectFact }: { onSelectFact?: (f
             <div className="flex items-center gap-2">
               <RelationshipBadge type={rel.relationship_type} />
               {rel.confidence != null && (
-                <span className="text-xs text-gray-400 font-mono">{(rel.confidence * 100).toFixed(0)}% confidence</span>
+                <span className="text-xs text-gray-400 font-mono">{(rel.confidence * 100).toFixed(0)}%</span>
               )}
             </div>
             <div className="grid grid-cols-2 gap-2 text-xs">
@@ -75,12 +80,18 @@ export default function RelationshipsPanel({ onSelectFact }: { onSelectFact?: (f
                   onClick={() => onSelectFact?.({ id: side.id, subject: side.subject, value: side.value, unit: side.unit, source_doc: side.source, page: side.page, period_normalized: side.period, fact_type: side.type, entity: side.entity })}
                   className="text-left rounded border border-hairline p-2 hover:border-sea-300 hover:bg-sea-50/40 transition-colors focus:outline-none">
                   <p className="font-medium text-gray-800 leading-snug line-clamp-2 mb-0.5">{side.subject}</p>
-                  {side.value && <p className="font-mono text-sea-600 text-xs">{side.value}{side.unit ? ` ${side.unit}` : ""}</p>}
+                  {side.value && (
+                    <p className="font-mono font-semibold text-sea-700 text-xs">
+                      {side.value}{side.unit ? ` ${side.unit}` : ""}
+                    </p>
+                  )}
                   <p className="text-gray-400 text-xs truncate mt-0.5">{side.source?.replace(/\.pdf$/i, "")} p.{side.page}</p>
                 </button>
               ))}
             </div>
-            {rel.explanation && <p className="text-xs text-gray-500 leading-relaxed border-t border-hairline pt-2">{rel.explanation}</p>}
+            {rel.explanation && (
+              <p className="text-xs text-gray-500 leading-relaxed border-t border-hairline pt-2">{rel.explanation}</p>
+            )}
           </article>
         ))}
       </div>
