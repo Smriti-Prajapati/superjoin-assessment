@@ -40,7 +40,7 @@ export default function App() {
 
   const loadFacts = useCallback(() => {
     setLoading(true);
-    const params: FactFilter = { limit: 300, ...Object.fromEntries(Object.entries(filter).filter(([, v]) => v)) };
+    const params: FactFilter = { limit: 1000, ...Object.fromEntries(Object.entries(filter).filter(([, v]) => v)) };
     api.listFacts(params).then(setFacts).catch(console.error).finally(() => setLoading(false));
   }, [filter]);
 

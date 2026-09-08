@@ -145,7 +145,7 @@ def list_facts(
     entity: str = None,
     period: str = None,
     source_doc: str = None,
-    limit: int = 200,
+    limit: int = 1000,
     offset: int = 0,
 ):
     conn = get_conn()
@@ -209,7 +209,7 @@ def get_fact_relationships(fact_id: int):
 @app.get("/relationships")
 def list_relationships(
     relationship_type: str = None,
-    limit: int = 200,
+    limit: int = 1000,
     offset: int = 0,
 ):
     conn = get_conn()

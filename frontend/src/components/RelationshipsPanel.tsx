@@ -29,7 +29,7 @@ export default function RelationshipsPanel({ onSelectFact, externalFilter, onFil
 
   useEffect(() => {
     setLoading(true);
-    api.listRelationships({ limit: 300, ...(filter ? { relationship_type: filter } : {}) })
+    api.listRelationships({ limit: 1000, ...(filter ? { relationship_type: filter } : {}) })
       .then(setRels).catch(console.error).finally(() => setLoading(false));
   }, [filter]);
 
