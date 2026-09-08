@@ -8,13 +8,13 @@ Built for the Superjoin VIT 2026 Engineering Intern assignment.
 
 ## Demo
 
-> **[add your demo video link here]**
+> **[add your demo videgit huo link here]**
 
 ---
 
 ## Setup
 
-**You need:** Python 3.13, Node.js 18+, a free [Cohere API key](https://dashboard.cohere.com) (no card needed)
+**You need:** Python 3.13, Node.js 18+, a free [Cohere API key](https://dashboard.cohere.com) 
 
 ```bash
 git clone https://github.com/Smriti-Prajapati/superjoin-assessment.git
@@ -46,6 +46,29 @@ cd frontend && npm run dev
 Open **http://localhost:5173**, drag PDFs onto the upload zone. Facts appear as they're extracted — no need to wait for the whole doc.
 
 For batch processing: `python backend/ingest_all.py`
+
+---
+
+## Deploy (Free)
+
+**Render** — free tier, auto-deploys from GitHub
+
+1. Push to GitHub (already done)
+2. Go to [render.com](https://render.com) → sign in with GitHub
+3. New → Blueprint → connect `Smriti-Prajapati/superjoin-assessment`
+4. Render reads `render.yaml` and creates 2 services:
+   - `factlens-backend` (Python web service)
+   - `factlens-frontend` (static site)
+5. Add environment variable `COHERE_API_KEY` to the backend service
+6. Both deploy automatically — frontend gets a URL like `https://factlens-frontend.onrender.com`
+
+**Update frontend API URL** after backend deploys:
+```bash
+# In frontend/src/api/client.ts, change BASE_URL to:
+const BASE_URL = "https://factlens-backend.onrender.com"
+```
+
+Commit, push — Render auto-redeploys.
 
 ---
 
