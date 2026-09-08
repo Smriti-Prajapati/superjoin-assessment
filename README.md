@@ -1,6 +1,6 @@
 # FactLens
 
-Extract facts from PDFs, link them to source evidence, and find where they agree, conflict, or need context to make sense.
+FactLens extracts meaningful facts from PDFs, grounds every fact in source evidence, and automatically identifies where documents corroborate, contradict, or reconcile each other through context.
 
 Built for the Superjoin VIT 2026 Engineering Intern assignment.
 
@@ -8,109 +8,69 @@ Built for the Superjoin VIT 2026 Engineering Intern assignment.
 
 ## Demo
 
-> **[add your demo videgit huo link here]**
+> **[add your demo video link here]**
 
 ---
 
 ## Setup
 
-**You need:** Python 3.13, Node.js 18+, a free [Cohere API key](https://dashboard.cohere.com) 
+**You need:** Python 3.13, Node.js 18+, a free [Cohere API key](https://dashboard.cohere.com) (no card needed)
 
 ```bash
 git clone https://github.com/Smriti-Prajapati/superjoin-assessment.git
 cd superjoin-assessment
 cp .env.example .env
-# open .env and paste your COHERE_API_KEY
+# paste your COHERE_API_KEY in .env
 ```
 
-**Backend:**
 ```bash
+# backend
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r backend/requirements.txt --only-binary=:all:
-```
 
-**Frontend:**
-```bash
+# frontend
 cd frontend && npm install
 ```
 
-**Run:**
 ```bash
-# terminal 1
+# run — two terminals
 cd backend && ..\venv\Scripts\python.exe -m uvicorn main:app --port 8000
-
-# terminal 2
 cd frontend && npm run dev
 ```
 
-Open **http://localhost:5173**, drag PDFs onto the upload zone. Facts appear as they're extracted — no need to wait for the whole doc.
-
-For batch processing: `python backend/ingest_all.py`
-
----
-
-## Deploy (Free)
-
-**Render** — free tier, auto-deploys from GitHub
-
-1. Push to GitHub (already done)
-2. Go to [render.com](https://render.com) → sign in with GitHub
-3. New → Blueprint → connect `Smriti-Prajapati/superjoin-assessment`
-4. Render reads `render.yaml` and creates 2 services:
-   - `factlens-backend` (Python web service)
-   - `factlens-frontend` (static site)
-5. Add environment variable `COHERE_API_KEY` to the backend service
-6. Both deploy automatically — frontend gets a URL like `https://factlens-frontend.onrender.com`
-
-**Update frontend API URL** after backend deploys:
-```bash
-# In frontend/src/api/client.ts, change BASE_URL to:
-const BASE_URL = "https://factlens-backend.onrender.com"
-```
-
-Commit, push — Render auto-redeploys.
+Open **http://localhost:5173** and drop PDFs onto the upload zone.
 
 ---
 
 ## The Four Cases
 
-All visible in the **Relationships** tab after processing the PDFs.
+**1. Corroborated** — Delhivery shipment volumes appear in both the IPO prospectus and FY24 annual report. Same entity, same metric, consistent values → corroborates.
 
-**1. Corroborated** — Delhivery's market share and shipment volume numbers appear in both the IPO prospectus and the FY24 annual report. Same entity, same metric, consistent numbers → marked corroborates.
+**2. Contradicted** — A metric at two different values with no period, scope, or unit difference to explain it. 2 contradicted pairs visible in the UI.
 
-**2. Contradicted** — A metric stated at two genuinely different values across documents with no period, scope, or unit difference to explain it. The UI shows 2 contradicted pairs.
+**3. Reconciled by context** — Delhivery standalone revenue (₹74,540 Mn) vs consolidated (₹81,415 Mn), same period. The reconciler names the specific field — it won't output "reconciled" without a reason.
 
-**3. Reconciled by context** — The largest group (200+ pairs). Examples: Delhivery standalone revenue (₹74,540 mn) vs consolidated (₹81,415 mn) — explained by scope. FY23 vs FY24 figures for the same metric — explained by period. The reconciler is required to name the specific field in its explanation, it won't just say "reconciled" without a reason.
-
-**4. Extraction failure, documented** — `verify_facts.py` found that ~10/20 sampled facts had wrong page numbers. The evidence snippet is always verbatim and correct, but the page number can be off. Root cause: the LLM extracts from batches of 30 chunks spanning multiple pages, and the page-attribution heuristic fails when snippets don't match chunk text exactly. I improved the search (progressive needle lengths + word-frequency fallback) but the fix only applies to new ingestions. What I'd do properly: ask the LLM to return which `[Page N]` marker the evidence came from.
+**4. Extraction failure, documented** — ~50% of sampled facts had wrong page numbers. Evidence text is always correct; the page attribution heuristic fails when snippets span chunk boundaries. Fix: ask the LLM to return `[Page N]` markers directly.
 
 ---
 
 ## Approach
 
-PDFs → PyMuPDF chunks (≤800 chars, page numbers preserved) → filter to fact-dense chunks → Cohere Chat extracts structured facts in batches → Cohere Embed finds candidate pairs → Cohere Chat classifies each pair as corroborates / contradicts / reconciled / related → stored in SQLite.
+PDFs → PyMuPDF chunks → fact-dense filter → Cohere Chat extracts structured facts → Cohere Embed finds candidate pairs → Cohere Chat classifies each pair → SQLite.
 
-**Things I thought about:**
-
-- **Two-pass instead of all-pairs** — embeddings cheaply find candidates, LLM only runs on those. Keeps API calls to O(k·n) not O(n²).
-- **Incremental** — new doc only compares against existing facts, never rebuilds. Adding doc 6 doesn't re-process docs 1–5.
-- **Dynamic fact types** — the LLM can propose new types (it's not a fixed enum). Works on any domain without code changes.
-- **Four relationship types not three** — added `related` for facts that share a subject but aren't actually comparable (different transactions, different metrics). Without this, the reconciler mislabels unrelated facts as "reconciled".
-- **Serialized queue** — one PDF at a time so two docs don't race on the Cohere rate limit.
-- **SQLite not a graph DB** — the assignment explicitly says graph DB alone isn't the answer. A relationships table with fact_id_a/b is sufficient for everything needed here.
+- **Two-pass** — embeddings find candidates cheaply, LLM only runs on those (O(k·n) not O(n²))
+- **Incremental** — new docs only compare against existing facts, never a full rebuild
+- **Dynamic fact types** — the LLM proposes types freely, no fixed enum, works on any domain
+- **Four relationship types** — added `related` to prevent mislabeling unrelated facts as reconciled
+- **SQLite over graph DB** — a relationships table with `fact_id_a/b` handles every query needed here
 
 ---
 
-## Limitations and what I'd fix
+## Limitations and Next Steps
 
-- Page numbers are sometimes wrong (~50% in a sample) — evidence text is always correct
-- Scanned/image PDFs won't work — text layer only
-- Cohere free tier is 10 calls/min so a 100-page PDF takes 3–5 minutes
-- Some `reconciled` pairs should probably be `related` — the prompt is better now but not perfect
-- No deduplication — the same fact can get extracted twice if it appears in two overlapping chunks
+- Page numbers ~50% wrong in a sample — evidence text is always correct
+- Scanned/image-only PDFs not supported (text layer required)
+- Free Cohere tier (10 calls/min) means a 100-page PDF takes 3–5 minutes
+- No fact deduplication — same fact can appear twice across overlapping chunks
 
-**Next up:**
-- Better page attribution by returning `[Page N]` markers from the LLM
-- Fact deduplication before storage
-- Human feedback to correct wrong relationship labels
-- Export to JSON/CSV
+Next: better page attribution via `[Page N]` markers, deduplication, human feedback on relationship labels, JSON/CSV export.
