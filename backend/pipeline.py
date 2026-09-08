@@ -186,7 +186,7 @@ def _load_other_doc_facts(conn, doc_id: int) -> list[dict]:
 
 def _compute_relationships(conn, new_facts: list[dict], existing_facts: list[dict]) -> int:
     candidates = find_candidate_pairs(
-        new_facts, existing_facts, top_k=5, similarity_threshold=0.50
+        new_facts, existing_facts, top_k=3, similarity_threshold=0.65
     )
     print(f"[pipeline] {len(candidates)} candidate pairs to reconcile")
 
@@ -213,7 +213,7 @@ def _compute_relationships(conn, new_facts: list[dict], existing_facts: list[dic
 def _compute_within_doc(conn, facts: list[dict]):
     if len(facts) < 2:
         return
-    candidates = find_candidate_pairs(facts, facts, top_k=3, similarity_threshold=0.78)
+    candidates = find_candidate_pairs(facts, facts, top_k=2, similarity_threshold=0.82)
     added = 0
     for fa, fb, _ in candidates:
         if fa["id"] == fb["id"]:

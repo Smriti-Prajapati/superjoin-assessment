@@ -20,7 +20,7 @@ MODEL = "command-a-03-2025"
 # ── rate limiter (shared across extraction + reconciliation) ─────────────────
 _rl_lock = threading.Lock()
 _last_call: float = 0.0
-MIN_INTERVAL = 6.5   # Cohere free tier: 10 calls/min
+MIN_INTERVAL = 3.5   # Cohere free tier: ~20 calls/min, 3.5s is safe
 
 
 def _rate_wait():
@@ -236,7 +236,7 @@ def _find_page(snippet: str, chunks: list[Chunk]) -> int | None:
 # ── reconciliation ────────────────────────────────────────────────────────────
 # Concurrent: up to 3 LLM calls in-flight, respecting the shared rate limiter.
 
-_recon_sem = threading.Semaphore(3)
+_recon_sem = threading.Semaphore(5)
 
 
 def reconcile_fact_pair(fact_a: dict, fact_b: dict) -> dict:
