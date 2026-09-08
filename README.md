@@ -10,6 +10,12 @@ Built for the Superjoin VIT 2026 Engineering Intern assignment.
 
 > [**Watch the FactLens Demo**](https://www.loom.com/share/820a593a61f24b98aca4f3f4d72f7870)
 
+## Screenshots
+
+<img width="1919" height="1003" alt="image" src="https://github.com/user-attachments/assets/2146f60d-40ca-45dc-888c-77849707fddf" />
+
+
+
 ## Setup
 
 **You need:** Python 3.13, Node.js 18+, a free [Cohere API key](https://dashboard.cohere.com) 
