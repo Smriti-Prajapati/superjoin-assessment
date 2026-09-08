@@ -90,21 +90,23 @@ export default function App() {
             <UploadZone onUploaded={() => { loadDocuments(); loadFacts(); }} />
           </div>
 
-          {/* doc list */}
+          {/* doc list — compact */}
           {documents.length > 0 && (
-            <div className="px-3 pt-2.5 pb-2 border-b border-hairline space-y-2">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Documents</p>
-              {documents.map(doc => (
-                <div key={doc.id}>
-                  <div className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-sea-500 flex-shrink-0" />
-                    <span className="text-xs text-gray-600 truncate" title={doc.filename}>
-                      {shortName(doc.filename ?? "")}
-                    </span>
+            <div className="px-3 pt-2.5 pb-2 border-b border-hairline">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Documents</p>
+              <div className="space-y-0.5">
+                {documents.map(doc => (
+                  <div key={doc.id}>
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-sea-500 flex-shrink-0" />
+                      <span className="text-xs text-gray-600 truncate" title={doc.filename}>
+                        {shortName(doc.filename ?? "")}
+                      </span>
+                    </div>
+                    <DocProgressBar doc={doc} />
                   </div>
-                  <DocProgressBar doc={doc} />
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           )}
 

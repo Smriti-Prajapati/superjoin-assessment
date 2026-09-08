@@ -4,23 +4,21 @@ import type { Document, DocProgress } from "../api/client";
 
 const STAGE_LABEL: Record<string, string> = {
   queued:     "queued",
-  extracting: "extracting facts",
+  extracting: "extracting",
   embedding:  "embedding",
   linking:    "linking",
-  done:       "done",
+  done:       "",
 };
 
-const STAGE_COLOR: Record<string, string> = {
+const STAGE_DOT: Record<string, string> = {
   queued:     "bg-gray-300",
-  extracting: "bg-sea-500",
-  embedding:  "bg-lavender-500",
-  linking:    "bg-amber-400",
-  done:       "bg-sea-600",
+  extracting: "bg-sea-400 animate-pulse",
+  embedding:  "bg-lavender-400 animate-pulse",
+  linking:    "bg-amber-400 animate-pulse",
+  done:       "bg-sea-500",
 };
 
-interface Props {
-  doc: Document;
-}
+interface Props { doc: Document; }
 
 export default function DocProgressBar({ doc }: Props) {
   const [progress, setProgress] = useState<DocProgress | null>(null);
@@ -41,31 +39,22 @@ export default function DocProgressBar({ doc }: Props) {
     return () => { stopped = true; };
   }, [doc.id]);
 
-  if (!progress || progress.stage === "done") return null;
+  const stage = progress?.stage ?? "queued";
+  const dot = STAGE_DOT[stage] ?? "bg-gray-300";
+  const label = STAGE_LABEL[stage] ?? stage;
 
-  const pct = progress.batches_total > 0
-    ? Math.round((progress.batches_done / progress.batches_total) * 100)
-    : 0;
-
-  const barColor = STAGE_COLOR[progress.stage] ?? "bg-sea-500";
-  const stageLabel = STAGE_LABEL[progress.stage] ?? progress.stage;
+  if (stage === "done") return null;
 
   return (
-    <div className="mt-1.5 space-y-1">
-      <div className="flex items-center justify-between text-xs text-gray-500">
-        <span className="italic">{stageLabel}</span>
-        <span className="font-mono text-gray-400">
-          {progress.facts_found > 0 && `${progress.facts_found} facts`}
-          {progress.stage === "extracting" && progress.batches_total > 0 &&
-            ` · ${progress.batches_done}/${progress.batches_total} batches`}
-        </span>
-      </div>
-      <div className="h-1 w-full bg-gray-100 rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all duration-500 ${barColor}`}
-          style={{ width: `${Math.max(4, pct)}%` }}
-        />
-      </div>
+    <div className="flex items-center gap-1 mt-0.5 pl-3">
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot}`} />
+      <span className="text-xs text-gray-400 italic">
+        {label}
+        {stage === "extracting" && progress && progress.batches_total > 0 &&
+          ` ${progress.batches_done}/${progress.batches_total}`}
+        {progress && progress.facts_found > 0 &&
+          <span className="ml-1 not-italic text-gray-300">{progress.facts_found} facts</span>}
+      </span>
     </div>
   );
 }
