@@ -1,53 +1,69 @@
 """
-LLM-based fact extraction using Groq (free tier).
-
-Strategy to stay within 30K tokens/min:
-- Only send the most fact-dense chunks (tables, paragraphs with numbers)
-- Small batches of ~10 chunks (~2000 tokens each)
-- 60s sliding window limiter — max 12 calls/min to stay safe
+LLM-based fact extraction using Cohere (command-a-03-2025).
+Free tier: 10 calls/min, 1000 calls/day — no token-per-minute limit.
+Much faster than Groq for bulk extraction.
 """
 
 import json
 import os
 import re
 import time
-import groq as groq_sdk
+import httpx
 from extract_pdf import Chunk
 
-_client = None
+COHERE_API_KEY = os.environ.get("COHERE_API_KEY", "")
+COHERE_URL = "https://api.cohere.com/v2/chat"
+MODEL = "command-a-03-2025"
 
-def _get_client():
-    global _client
-    if _client is None:
-        _client = groq_sdk.Groq(api_key=os.environ.get("GROQ_API_KEY", ""))
-    return _client
+# rate limiter: 10 calls/min = 1 call per 6s minimum
+_last_call_time: float = 0.0
+MIN_INTERVAL = 6.5  # seconds between calls (slightly over 6 for safety)
 
-MODEL = "qwen/qwen3.8-27b"
-
-# sliding window rate limiter
-_call_times: list[float] = []
-MAX_CALLS_PER_MIN = 10  # conservative — well under free tier limit
 
 def _rate_limit():
-    """Block until we're safe to make another call."""
+    global _last_call_time
     now = time.time()
-    global _call_times
-    # drop calls older than 60s
-    _call_times = [t for t in _call_times if now - t < 60]
-    if len(_call_times) >= MAX_CALLS_PER_MIN:
-        wait = 61 - (now - _call_times[0])
-        if wait > 0:
-            print(f"[llm_extract] rate limit window full, waiting {wait:.0f}s...")
-            time.sleep(wait)
-        _call_times = [t for t in _call_times if time.time() - t < 60]
-    _call_times.append(time.time())
+    elapsed = now - _last_call_time
+    if elapsed < MIN_INTERVAL:
+        time.sleep(MIN_INTERVAL - elapsed)
+    _last_call_time = time.time()
+
+
+def _call(prompt: str, max_tokens: int = 4096) -> str | None:
+    _rate_limit()
+    headers = {
+        "Authorization": f"Bearer {COHERE_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": 0.1,
+    }
+    for attempt in range(3):
+        try:
+            r = httpx.post(COHERE_URL, headers=headers, json=body, timeout=60)
+            if r.status_code == 429:
+                wait = 30 * (attempt + 1)
+                print(f"[llm_extract] rate limit, waiting {wait}s...")
+                time.sleep(wait)
+                continue
+            if not r.is_success:
+                print(f"[llm_extract] HTTP {r.status_code}: {r.text[:200]}")
+                return None
+            data = r.json()
+            return data["message"]["content"][0]["text"]
+        except Exception as e:
+            print(f"[llm_extract] attempt {attempt+1} error: {str(e)[:100]}")
+            if attempt < 2:
+                time.sleep(5)
+    return None
 
 
 # ── chunk selection ─────────────────────────────────────────────────────────
 
 def _is_fact_dense(text: str) -> bool:
-    """True if a chunk likely contains extractable facts."""
-    # must have some numeric content or key governance terms
     has_numbers = bool(re.search(r"\d[\d,\.]+", text))
     has_keywords = bool(re.search(
         r"(revenue|profit|loss|ebitda|margin|growth|appoint|resign|director|"
@@ -57,11 +73,9 @@ def _is_fact_dense(text: str) -> bool:
     return has_numbers or has_keywords
 
 
-def _select_chunks(chunks: list[Chunk]) -> list[Chunk]:
-    """Filter and deduplicate chunks, keeping only fact-dense ones."""
+def _select_chunks(chunks: list) -> list:
     useful = [c for c in chunks if len(c.text) > 50 and c.chunk_type != "heading"]
     useful = [c for c in useful if _is_fact_dense(c.text)]
-    # deduplicate
     seen, deduped = set(), []
     for c in useful:
         key = c.text[:80].lower().strip()
@@ -85,7 +99,7 @@ FACT_SCHEMA = """{
       "fact_type": "financial_metric | operational_metric | macro_indicator | governance_event | personnel_appointment | personnel_resignation | director_status | company_description | risk_factor | customer_metric | workforce_metric | esg_metric | technology_capability",
       "estimate_or_actual": "actual | estimate | projection | provisional | unknown",
       "as_of_date": "effective date or null",
-      "evidence_snippet": "verbatim 1-3 sentence quote",
+      "evidence_snippet": "verbatim 1-3 sentence quote from the text",
       "confidence": 0.85
     }
   ]
@@ -96,22 +110,25 @@ def extract_facts_from_chunks(
     chunks: list[Chunk],
     source_doc: str,
     doc_context: str = "",
-    batch_size: int = 10,
+    batch_size: int = 30,
+    on_batch_done: callable = None,
 ) -> list[dict]:
     selected = _select_chunks(chunks)
-    print(f"[llm_extract] {len(chunks)} raw → {len(selected)} fact-dense chunks selected")
+    print(f"[llm_extract] {len(chunks)} raw → {len(selected)} fact-dense chunks")
 
     if not selected:
         return []
 
     all_facts: list[dict] = []
-    total_batches = (len(selected) + batch_size - 1) // batch_size
+    total = (len(selected) + batch_size - 1) // batch_size
     for i in range(0, len(selected), batch_size):
         batch = selected[i : i + batch_size]
-        batch_num = i // batch_size + 1
-        print(f"[llm_extract] batch {batch_num}/{total_batches} (chunks {i+1}-{min(i+batch_size, len(selected))})")
+        n = i // batch_size + 1
+        print(f"[llm_extract] batch {n}/{total}")
         facts = _extract_batch(batch, source_doc, doc_context)
         all_facts.extend(facts)
+        if on_batch_done and facts:
+            on_batch_done(facts)
     return all_facts
 
 
@@ -124,53 +141,46 @@ def _extract_batch(chunks: list[Chunk], source_doc: str, doc_context: str) -> li
         lines.append(chunk.text)
         lines.append("")
 
-    prompt = f"""Extract facts from this document section. Document: {source_doc}
+    prompt = f"""Extract ALL meaningful facts from this document section. Document: {source_doc}
 
-Rules: only extract clearly stated facts, no hallucination. For financial figures note standalone/consolidated in scope. For appointments/resignations set as_of_date. evidence_snippet must be verbatim text. confidence >= 0.5 only.
+Rules:
+- Only extract facts clearly stated in the text. Never hallucinate.
+- For director appointments/resignations: set as_of_date to the effective date.
+- For financial figures: set scope to standalone or consolidated.
+- "advance estimate", "projected", "forecast" → estimate_or_actual = "estimate".
+- evidence_snippet must be verbatim text. confidence >= 0.5 only.
 
 Text:
 {chr(10).join(lines)}
 
-Return ONLY this JSON (no markdown):
+Return ONLY valid JSON matching this structure exactly, no markdown fences:
 {FACT_SCHEMA}"""
 
-    _rate_limit()
-    for attempt in range(3):
-        try:
-            response = _get_client().chat.completions.create(
-                model=MODEL,
-                messages=[
-                    {"role": "system", "content": "You extract structured facts from financial documents. Return only valid JSON."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.1,
-                max_tokens=2048,
-                response_format={"type": "json_object"},
-            )
-            raw = response.choices[0].message.content.strip()
-            data = json.loads(raw)
-            facts = data.get("facts", [])
-            enriched = []
-            for fact in facts:
-                if not _validate_fact(fact):
-                    continue
-                fact["source_doc"] = source_doc
-                fact["page"] = _find_page(fact.get("evidence_snippet", ""), chunks)
-                enriched.append(fact)
-            print(f"[llm_extract]   → {len(enriched)} facts")
-            return enriched
+    raw = _call(prompt, max_tokens=4096)
+    if not raw:
+        return []
 
-        except groq_sdk.RateLimitError:
-            wait = 65
-            print(f"[llm_extract] rate limit hit, waiting {wait}s...")
-            time.sleep(wait)
-            _rate_limit()
-        except Exception as e:
-            print(f"[llm_extract] attempt {attempt+1} error: {str(e)[:120]}")
-            if attempt < 2:
-                time.sleep(5)
-
-    return []
+    try:
+        raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
+        raw = re.sub(r"\s*```$", "", raw)
+        # find the JSON object
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if match:
+            raw = match.group(0)
+        data = json.loads(raw)
+        facts = data.get("facts", [])
+        enriched = []
+        for fact in facts:
+            if not _validate_fact(fact):
+                continue
+            fact["source_doc"] = source_doc
+            fact["page"] = _find_page(fact.get("evidence_snippet", ""), chunks)
+            enriched.append(fact)
+        print(f"[llm_extract]   → {len(enriched)} facts")
+        return enriched
+    except Exception as e:
+        print(f"[llm_extract] parse error: {e} | raw[:100]: {raw[:100]}")
+        return []
 
 
 def _find_page(snippet: str, chunks: list[Chunk]) -> int | None:
@@ -204,7 +214,7 @@ def reconcile_fact_pair(fact_a: dict, fact_b: dict) -> dict:
             f'  Evidence: "{(f.get("evidence_snippet") or "")[:150]}"',
         ])
 
-    prompt = f"""Classify relationship between these two facts.
+    prompt = f"""Classify the relationship between these two facts from different documents.
 
 Fact A:
 {_fmt(fact_a)}
@@ -212,35 +222,28 @@ Fact A:
 Fact B:
 {_fmt(fact_b)}
 
-Types: corroborates (same underlying fact), contradicts (genuine conflict), reconciled_by_context (different scope/period/estimate vs actual/rounding)
+Classify as exactly one of:
+- corroborates: same underlying fact (unit conversion or minor label differences ok)
+- contradicts: genuine conflict not explainable by scope, period, estimate vs actual, or rounding
+- reconciled_by_context: difference explained by scope (standalone vs consolidated), period, estimate vs actual, as-of date, or rounding
 
-Return ONLY: {{"relationship_type": "corroborates", "explanation": "one sentence", "confidence": 0.85}}"""
+Return ONLY this JSON, no markdown:
+{{"relationship_type": "corroborates", "explanation": "one sentence", "confidence": 0.85}}"""
 
-    _rate_limit()
-    for attempt in range(3):
-        try:
-            response = _get_client().chat.completions.create(
-                model=MODEL,
-                messages=[
-                    {"role": "system", "content": "Classify relationships between financial facts. Return only valid JSON."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.0,
-                max_tokens=150,
-                response_format={"type": "json_object"},
-            )
-            raw = response.choices[0].message.content.strip()
-            result = json.loads(raw)
-            if result.get("relationship_type") not in ("corroborates", "contradicts", "reconciled_by_context"):
-                result["relationship_type"] = "reconciled_by_context"
-            return result
+    raw = _call(prompt, max_tokens=200)
+    if not raw:
+        return {"relationship_type": "reconciled_by_context", "explanation": "reconciliation failed", "confidence": 0.3}
 
-        except groq_sdk.RateLimitError:
-            time.sleep(65)
-            _rate_limit()
-        except Exception as e:
-            print(f"[llm_extract] reconciler error: {str(e)[:80]}")
-            if attempt < 2:
-                time.sleep(5)
-
-    return {"relationship_type": "reconciled_by_context", "explanation": "reconciliation failed", "confidence": 0.3}
+    try:
+        raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
+        raw = re.sub(r"\s*```$", "", raw)
+        match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if match:
+            raw = match.group(0)
+        result = json.loads(raw)
+        if result.get("relationship_type") not in ("corroborates", "contradicts", "reconciled_by_context"):
+            result["relationship_type"] = "reconciled_by_context"
+        return result
+    except Exception as e:
+        print(f"[llm_extract] reconciler parse error: {e}")
+        return {"relationship_type": "reconciled_by_context", "explanation": "reconciliation failed", "confidence": 0.3}

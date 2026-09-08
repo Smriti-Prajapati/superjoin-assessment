@@ -89,6 +89,11 @@ function toQS(params: Record<string, string | number | undefined>): string {
   return qs ? `?${qs}` : "";
 }
 
+export interface QueueStatus {
+  queued: number;
+  current: { filename?: string; started_at?: number } | null;
+}
+
 export const api = {
   uploadDocument: (file: File) => {
     const form = new FormData();
@@ -104,4 +109,5 @@ export const api = {
   getFactRelationships: (id: number) => req<Relationship[]>(`/facts/${id}/relationships`),
   listRelationships: (params: RelationshipFilter = {}) =>
     req<Relationship[]>(`/relationships${toQS(params as Record<string, string | number | undefined>)}`),
+  getQueueStatus: () => req<QueueStatus>("/queue"),
 };

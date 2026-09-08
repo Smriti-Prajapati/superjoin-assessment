@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "./api/client";
-import type { Document, Fact, FactFilter } from "./api/client";
+import type { Document, Fact, FactFilter, QueueStatus } from "./api/client";
 import UploadZone from "./components/UploadZone";
 import FactCard from "./components/FactCard";
 import EvidencePanel from "./components/EvidencePanel";
@@ -15,9 +15,14 @@ export default function App() {
   const [activeTab, setActiveTab]       = useState<TabId>("facts");
   const [loading, setLoading]           = useState(false);
   const [filter, setFilter]             = useState<FactFilter>({ fact_type: "", source_doc: "", period: "" });
+  const [queue, setQueue]               = useState<QueueStatus>({ queued: 0, current: null });
 
   const loadDocuments = useCallback(() => {
     api.listDocuments().then(setDocuments).catch(console.error);
+  }, []);
+
+  const loadQueue = useCallback(() => {
+    api.getQueueStatus().then(setQueue).catch(console.error);
   }, []);
 
   const loadFacts = useCallback(() => {
@@ -28,14 +33,16 @@ export default function App() {
 
   useEffect(() => { loadDocuments(); }, [loadDocuments]);
   useEffect(() => { loadFacts(); }, [loadFacts]);
+  useEffect(() => { loadQueue(); }, [loadQueue]);
 
   useEffect(() => {
     const id = setInterval(() => {
       loadDocuments();
+      loadQueue();
       if (activeTab === "facts") loadFacts();
-    }, 8000);
+    }, 5000);
     return () => clearInterval(id);
-  }, [loadDocuments, loadFacts, activeTab]);
+  }, [loadDocuments, loadFacts, loadQueue, activeTab]);
 
   const uniqueSources = [...new Set(facts.map(f => f.source_doc).filter(Boolean))];
   const uniqueTypes   = [...new Set(facts.map(f => f.fact_type).filter(Boolean) as string[])];
@@ -54,6 +61,16 @@ export default function App() {
           <span className="text-xs text-gray-400">
             {documents.length} doc{documents.length !== 1 ? "s" : ""} · {facts.length} fact{facts.length !== 1 ? "s" : ""}
           </span>
+          {/* queue status */}
+          {(queue.current?.filename || queue.queued > 0) && (
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-xs text-amber-700">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse inline-block" />
+              {queue.current?.filename
+                ? <>processing <span className="font-medium max-w-[140px] truncate">{queue.current.filename.replace(/\.pdf$/i, "")}</span>{queue.queued > 0 ? ` · ${queue.queued} waiting` : ""}</>
+                : `${queue.queued} queued`
+              }
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
           {documents.map(doc => (

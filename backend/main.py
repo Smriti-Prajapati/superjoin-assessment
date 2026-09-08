@@ -1,5 +1,8 @@
 import os
 import shutil
+import threading
+import queue
+import time
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -14,6 +17,30 @@ from pipeline import ingest_document
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+# serialized ingestion queue — one doc at a time to avoid rate limit conflicts
+_ingest_queue: queue.Queue = queue.Queue()
+
+def _queue_worker():
+    while True:
+        filepath = _ingest_queue.get()
+        filename = os.path.basename(filepath)
+        _current_processing["filename"] = filename
+        _current_processing["started_at"] = time.time()
+        try:
+            result = ingest_document(filepath)
+            print(f"[queue] done: {result}")
+        except Exception as e:
+            import traceback
+            print(f"[queue] error for {filepath}: {e}")
+            traceback.print_exc()
+        finally:
+            _current_processing.clear()
+            _ingest_queue.task_done()
+
+# start single worker thread
+_worker = threading.Thread(target=_queue_worker, daemon=True)
+_worker.start()
 
 
 @asynccontextmanager
@@ -32,17 +59,32 @@ app.add_middleware(
 )
 
 
+# track currently processing doc
+_current_processing: dict = {}
+
+
+# ── queue status ─────────────────────────────────────────────────────────────
+
+@app.get("/queue")
+def get_queue_status():
+    return {
+        "queued": _ingest_queue.qsize(),
+        "current": _current_processing.copy(),
+    }
+
+
 # ── documents ───────────────────────────────────────────────────────────────
 
 @app.post("/documents", status_code=202)
-async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+async def upload_document(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Only PDF files are supported")
     dest = UPLOAD_DIR / file.filename
     with dest.open("wb") as f:
         shutil.copyfileobj(file.file, f)
-    background_tasks.add_task(_run_pipeline, str(dest))
-    return {"status": "queued", "filename": file.filename}
+    _ingest_queue.put(str(dest))
+    queue_size = _ingest_queue.qsize()
+    return {"status": "queued", "filename": file.filename, "position": queue_size}
 
 
 @app.post("/documents/path")
@@ -51,7 +93,8 @@ async def ingest_from_path(body: dict):
     filepath = body.get("filepath", "")
     if not filepath or not os.path.exists(filepath):
         raise HTTPException(400, f"File not found: {filepath}")
-    return ingest_document(filepath)
+    _ingest_queue.put(filepath)
+    return {"status": "queued", "filepath": filepath}
 
 
 @app.get("/documents")
