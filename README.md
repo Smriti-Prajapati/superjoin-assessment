@@ -6,15 +6,13 @@ Built for the Superjoin VIT 2026 Engineering Intern assignment.
 
 ---
 
-## Demo
+## Video Demo
 
-> **[add your demo video link here]**
-
----
+> [**Watch the FactLens Demo**](https://www.loom.com/share/820a593a61f24b98aca4f3f4d72f7870)
 
 ## Setup
 
-**You need:** Python 3.13, Node.js 18+, a free [Cohere API key](https://dashboard.cohere.com) (no card needed)
+**You need:** Python 3.13, Node.js 18+, a free [Cohere API key](https://dashboard.cohere.com) 
 
 ```bash
 git clone https://github.com/Smriti-Prajapati/superjoin-assessment.git
