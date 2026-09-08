@@ -1,0 +1,7 @@
+# tell github linguist what to ignore for language detection
+frontend/node_modules/** linguist-vendored
+frontend/dist/** linguist-vendored
+frontend/postcss.config.js linguist-vendored
+frontend/tailwind.config.js linguist-vendored
+frontend/vite.config.js linguist-vendored
+frontend/package.json linguist-vendored

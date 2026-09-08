@@ -5,9 +5,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      "/documents": "http://localhost:8000",
-      "/facts": "http://localhost:8000",
-      "/relationships": "http://localhost:8000",
+      "/documents":    "http://localhost:8000",
+      "/facts":        "http://localhost:8000",
+      "/relationships":"http://localhost:8000",
     },
   },
 });
