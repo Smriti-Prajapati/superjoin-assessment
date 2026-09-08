@@ -83,10 +83,6 @@ export default function Landing() {
           <div className="flex items-center gap-4">
             <a href="https://github.com/Smriti-Prajapati/superjoin-assessment" target="_blank" rel="noopener noreferrer"
               className="text-sm text-gray-500 hover:text-gray-900 transition-colors">GitHub</a>
-            <button onClick={()=>navigate("/app")}
-              className="bg-sea-600 hover:bg-sea-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
-              Open App →
-            </button>
           </div>
         </div>
       </nav>
