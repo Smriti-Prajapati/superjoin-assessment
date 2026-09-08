@@ -64,5 +64,39 @@ def init_db():
         )
     """)
 
+    # live progress tracking per document
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS progress (
+            document_id INTEGER PRIMARY KEY REFERENCES documents(id),
+            stage TEXT NOT NULL DEFAULT 'extracting',
+            batches_done INTEGER NOT NULL DEFAULT 0,
+            batches_total INTEGER NOT NULL DEFAULT 0,
+            facts_found INTEGER NOT NULL DEFAULT 0,
+            relationships_found INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+def upsert_progress(doc_id: int, **kwargs):
+    """Update progress for a document. kwargs: stage, batches_done, batches_total, facts_found, relationships_found."""
+    conn = get_conn()
+    # build SET clause from kwargs
+    fields = {k: v for k, v in kwargs.items()
+              if k in ("stage", "batches_done", "batches_total", "facts_found", "relationships_found")}
+    if not fields:
+        conn.close()
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    set_clause += ", updated_at = datetime('now')"
+    values = list(fields.values()) + [doc_id]
+    conn.execute(
+        f"INSERT INTO progress (document_id) VALUES (?) ON CONFLICT(document_id) DO NOTHING",
+        (doc_id,)
+    )
+    conn.execute(f"UPDATE progress SET {set_clause} WHERE document_id = ?", values)
     conn.commit()
     conn.close()

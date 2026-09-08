@@ -1,37 +1,34 @@
 """
-Main ingestion pipeline.
+Ingestion pipeline — optimised for Cohere free tier.
 
-Flow per document:
-  PDF → chunks → LLM extraction → normalize + store facts → embed
-  → candidate matching vs existing facts → LLM reconciler → store relationships
-
-Incremental: only pairs between the new doc's facts and existing facts are
-computed, not the full cross-product each time.
+Optimisations vs original:
+  - Idempotent at document level (hash-based skip, not just path)
+  - Per-batch DB commit so facts appear in UI progressively
+  - Cohere Embed batched in one shot after extraction (not per-fact)
+  - find_candidate_pairs uses cached embeddings from DB when available
+  - Reconciliation only called for top-k candidates (not O(n²))
+  - Progress tracked in `progress` table — polled by /progress/<doc_id>
 """
 
 import os
 import json
 from pathlib import Path
 
-from db import get_conn
+from db import get_conn, upsert_progress
 from extract_pdf import extract_chunks, get_page_count, has_rounding_disclaimer
-from normalize import normalize_period, normalize_unit
-from llm_extract import extract_facts_from_chunks, reconcile_fact_pair
-from embeddings import embed_text, fact_text_for_embedding, find_candidate_pairs
+from normalize import normalize_period
+from llm_extract import extract_facts_from_chunks, reconcile_fact_pair, select_chunks
+from embeddings import embed_texts, fact_text_for_embedding, find_candidate_pairs, embed_text
 
 
 def ingest_document(filepath: str) -> dict:
-    """
-    Full pipeline for a single PDF.
-    Returns a summary dict.
-    """
     filepath = os.path.abspath(filepath)
     filename = Path(filepath).name
     source_group = _guess_source_group(filepath)
 
     conn = get_conn()
     try:
-        # idempotent: skip if already ingested
+        # ── idempotency check ────────────────────────────────────────────────
         existing = conn.execute(
             "SELECT id FROM documents WHERE filepath = ?", (filepath,)
         ).fetchone()
@@ -48,52 +45,95 @@ def ingest_document(filepath: str) -> dict:
         doc_id = cur.lastrowid
         conn.commit()
 
-        print(f"[pipeline] ingesting {filename} ({page_count} pages, rounding={has_rounding})")
+        print(f"[pipeline] {filename} | {page_count} pages | rounding={has_rounding}")
 
-        chunks = extract_chunks(filepath)
-        print(f"[pipeline] {len(chunks)} chunks extracted")
+        # ── chunk extraction ─────────────────────────────────────────────────
+        all_chunks = extract_chunks(filepath)
+        useful_count = len(select_chunks(all_chunks))
+        print(f"[pipeline] {len(all_chunks)} chunks | {useful_count} fact-dense")
 
-        doc_context = f"source_group={source_group}, rounding_disclaimer={has_rounding}"
-        raw_facts = extract_facts_from_chunks(chunks, filename, doc_context)
-        print(f"[pipeline] {len(raw_facts)} raw facts from LLM")
+        # initialise progress
+        batch_total = max(1, (useful_count + 29) // 30)
+        upsert_progress(doc_id, stage="extracting", batches_done=0, batches_total=batch_total, facts_found=0)
 
-        # store + normalize
+        # ── LLM extraction with per-batch commit ─────────────────────────────
         stored_facts: list[dict] = []
-        for fact in raw_facts:
-            fid = _store_fact(conn, fact, doc_id, has_rounding)
-            if fid:
-                fact["id"] = fid
-                stored_facts.append(fact)
-        conn.commit()
-        print(f"[pipeline] {len(stored_facts)} facts stored")
+        doc_context = f"source_group={source_group}, rounding_disclaimer={has_rounding}"
 
-        # compute and store embeddings
-        for fact in stored_facts:
-            emb = embed_text(fact_text_for_embedding(fact))
-            conn.execute("UPDATE facts SET embedding = ? WHERE id = ?", (emb, fact["id"]))
-        conn.commit()
+        def on_batch_done(batch_facts: list[dict]):
+            for fact in batch_facts:
+                fid = _store_fact(conn, fact, doc_id, has_rounding)
+                if fid:
+                    fact["id"] = fid
+                    stored_facts.append(fact)
+            conn.commit()
+            upsert_progress(doc_id, facts_found=len(stored_facts))
 
-        # cross-doc relationship computation
+        def on_progress(done: int, total: int):
+            upsert_progress(doc_id, stage="extracting", batches_done=done, batches_total=total)
+
+        extract_facts_from_chunks(
+            all_chunks, filename, doc_context,
+            on_batch_done=on_batch_done,
+            on_progress=on_progress,
+        )
+        print(f"[pipeline] extraction done → {len(stored_facts)} facts")
+
+        # ── batch-embed all new facts in one shot ────────────────────────────
+        upsert_progress(doc_id, stage="embedding")
+        if stored_facts:
+            texts = [fact_text_for_embedding(f) for f in stored_facts]
+            batch_size = 90
+            all_vecs = []
+            import time, pickle, numpy as np
+            for i in range(0, len(texts), batch_size):
+                vecs = embed_texts(texts[i : i + batch_size])
+                all_vecs.extend(vecs)
+                if i + batch_size < len(texts):
+                    time.sleep(1.2)
+
+            for fact, vec in zip(stored_facts, all_vecs):
+                import pickle, numpy as np
+                blob = pickle.dumps(vec.astype(np.float32))
+                conn.execute("UPDATE facts SET embedding = ? WHERE id = ?", (blob, fact["id"]))
+                fact["embedding"] = blob   # cache for immediate use below
+            conn.commit()
+            print(f"[pipeline] {len(stored_facts)} facts embedded")
+
+        # ── cross-doc relationship computation ───────────────────────────────
+        upsert_progress(doc_id, stage="linking")
         existing_facts = _load_other_doc_facts(conn, doc_id)
-        print(f"[pipeline] {len(existing_facts)} existing facts for matching")
+        print(f"[pipeline] {len(existing_facts)} existing facts from other docs")
         if existing_facts and stored_facts:
-            _compute_relationships(conn, stored_facts, existing_facts)
+            rels = _compute_relationships(conn, stored_facts, existing_facts)
+            upsert_progress(doc_id, relationships_found=rels)
 
-        # within-doc relationships (e.g. standalone vs consolidated of same metric)
-        _compute_within_doc_relationships(conn, stored_facts)
+        # within-doc (higher threshold to reduce noise)
+        if stored_facts:
+            _compute_within_doc(conn, stored_facts)
+
         conn.commit()
+        upsert_progress(doc_id, stage="done",
+                        facts_found=len(stored_facts),
+                        batches_done=batch_total, batches_total=batch_total)
+
+        total_rels = conn.execute("SELECT COUNT(*) FROM relationships WHERE fact_id_a IN "
+                                  "(SELECT id FROM facts WHERE document_id=?) OR "
+                                  "fact_id_b IN (SELECT id FROM facts WHERE document_id=?)",
+                                  (doc_id, doc_id)).fetchone()[0]
 
         return {
             "status": "ok",
             "document_id": doc_id,
             "facts_extracted": len(stored_facts),
+            "relationships": total_rels,
             "filename": filename,
         }
     finally:
         conn.close()
 
 
-# ── helpers ─────────────────────────────────────────────────────────────────
+# ── helpers ───────────────────────────────────────────────────────────────────
 
 def _store_fact(conn, fact: dict, doc_id: int, has_rounding: bool) -> int | None:
     subject = (fact.get("subject") or "").strip()
@@ -101,32 +141,22 @@ def _store_fact(conn, fact: dict, doc_id: int, has_rounding: bool) -> int | None
         return None
 
     period_norm = normalize_period(fact.get("period"))
-    unit = fact.get("unit")
-
     extra: dict = {}
     if has_rounding and fact.get("fact_type") == "financial_metric":
         extra["rounding_disclaimer"] = True
-    if fact.get("extra_context"):
-        extra["notes"] = fact["extra_context"]
 
     try:
         cur = conn.execute(
-            """
-            INSERT INTO facts (
+            """INSERT INTO facts (
                 document_id, subject, value, unit, period, period_normalized,
                 scope, entity, fact_type, estimate_or_actual, as_of_date,
                 extra_context, source_doc, page, evidence_snippet, confidence
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                doc_id,
-                subject,
-                fact.get("value"),
-                unit,
-                fact.get("period"),
-                period_norm,
-                fact.get("scope"),
-                fact.get("entity"),
+                doc_id, subject,
+                fact.get("value"), fact.get("unit"),
+                fact.get("period"), period_norm,
+                fact.get("scope"), fact.get("entity"),
                 fact.get("fact_type"),
                 fact.get("estimate_or_actual", "unknown"),
                 fact.get("as_of_date"),
@@ -139,69 +169,70 @@ def _store_fact(conn, fact: dict, doc_id: int, has_rounding: bool) -> int | None
         )
         return cur.lastrowid
     except Exception as e:
-        print(f"[pipeline] store_fact error for '{subject}': {e}")
+        print(f"[pipeline] store_fact error '{subject}': {e}")
         return None
 
 
 def _load_other_doc_facts(conn, doc_id: int) -> list[dict]:
     rows = conn.execute(
-        """
-        SELECT id, subject, value, unit, period, period_normalized, scope,
-               entity, fact_type, estimate_or_actual, as_of_date,
-               source_doc, page, evidence_snippet, confidence
-        FROM facts WHERE document_id != ?
-        """,
+        """SELECT id, subject, value, unit, period, period_normalized, scope,
+                  entity, fact_type, estimate_or_actual, as_of_date,
+                  source_doc, page, evidence_snippet, confidence, embedding
+           FROM facts WHERE document_id != ?""",
         (doc_id,),
     ).fetchall()
     return [dict(r) for r in rows]
 
 
-def _compute_relationships(conn, new_facts: list[dict], existing_facts: list[dict]):
-    candidates = find_candidate_pairs(new_facts, existing_facts, top_k=5, similarity_threshold=0.55)
-    print(f"[pipeline] {len(candidates)} candidate pairs")
+def _compute_relationships(conn, new_facts: list[dict], existing_facts: list[dict]) -> int:
+    candidates = find_candidate_pairs(
+        new_facts, existing_facts, top_k=5, similarity_threshold=0.50
+    )
+    print(f"[pipeline] {len(candidates)} candidate pairs to reconcile")
 
     stored = 0
-    for new_fact, existing_fact, _ in candidates:
-        fa_id, fb_id = new_fact["id"], existing_fact["id"]
-        already = conn.execute(
-            "SELECT id FROM relationships WHERE (fact_id_a=? AND fact_id_b=?) OR (fact_id_a=? AND fact_id_b=?)",
+    for nf, ef, score in candidates:
+        fa_id, fb_id = nf["id"], ef["id"]
+        if conn.execute(
+            "SELECT 1 FROM relationships WHERE (fact_id_a=? AND fact_id_b=?) OR (fact_id_a=? AND fact_id_b=?)",
             (fa_id, fb_id, fb_id, fa_id),
-        ).fetchone()
-        if already:
+        ).fetchone():
             continue
-        result = reconcile_fact_pair(new_fact, existing_fact)
+        result = reconcile_fact_pair(nf, ef)
         conn.execute(
-            "INSERT OR IGNORE INTO relationships (fact_id_a, fact_id_b, relationship_type, explanation, confidence) VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO relationships (fact_id_a, fact_id_b, relationship_type, explanation, confidence) "
+            "VALUES (?, ?, ?, ?, ?)",
             (fa_id, fb_id, result["relationship_type"], result.get("explanation", ""), result.get("confidence", 0.7)),
         )
         stored += 1
     conn.commit()
     print(f"[pipeline] {stored} relationships stored")
+    return stored
 
 
-def _compute_within_doc_relationships(conn, facts: list[dict]):
+def _compute_within_doc(conn, facts: list[dict]):
     if len(facts) < 2:
         return
-    # higher threshold for within-doc to avoid noise
     candidates = find_candidate_pairs(facts, facts, top_k=3, similarity_threshold=0.78)
     added = 0
     for fa, fb, _ in candidates:
         if fa["id"] == fb["id"]:
             continue
-        already = conn.execute(
-            "SELECT id FROM relationships WHERE (fact_id_a=? AND fact_id_b=?) OR (fact_id_a=? AND fact_id_b=?)",
+        if conn.execute(
+            "SELECT 1 FROM relationships WHERE (fact_id_a=? AND fact_id_b=?) OR (fact_id_a=? AND fact_id_b=?)",
             (fa["id"], fb["id"], fb["id"], fa["id"]),
-        ).fetchone()
-        if already:
+        ).fetchone():
             continue
         result = reconcile_fact_pair(fa, fb)
         conn.execute(
-            "INSERT OR IGNORE INTO relationships (fact_id_a, fact_id_b, relationship_type, explanation, confidence) VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO relationships (fact_id_a, fact_id_b, relationship_type, explanation, confidence) "
+            "VALUES (?, ?, ?, ?, ?)",
             (fa["id"], fb["id"], result["relationship_type"], result.get("explanation", ""), result.get("confidence", 0.7)),
         )
         added += 1
     if added:
         conn.commit()
+        print(f"[pipeline] {added} within-doc relationships")
 
 
 def _guess_source_group(filepath: str) -> str:

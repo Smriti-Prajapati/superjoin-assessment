@@ -73,6 +73,16 @@ def get_queue_status():
     }
 
 
+@app.get("/progress/{doc_id}")
+def get_progress(doc_id: int):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM progress WHERE document_id = ?", (doc_id,)).fetchone()
+    conn.close()
+    if not row:
+        return {"stage": "queued", "batches_done": 0, "batches_total": 0, "facts_found": 0, "relationships_found": 0}
+    return dict(row)
+
+
 # ── documents ───────────────────────────────────────────────────────────────
 
 @app.post("/documents", status_code=202)

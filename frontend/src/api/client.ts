@@ -94,6 +94,16 @@ export interface QueueStatus {
   current: { filename?: string; started_at?: number } | null;
 }
 
+export interface DocProgress {
+  document_id: number;
+  stage: "queued" | "extracting" | "embedding" | "linking" | "done";
+  batches_done: number;
+  batches_total: number;
+  facts_found: number;
+  relationships_found: number;
+  updated_at?: string;
+}
+
 export const api = {
   uploadDocument: (file: File) => {
     const form = new FormData();
@@ -110,4 +120,5 @@ export const api = {
   listRelationships: (params: RelationshipFilter = {}) =>
     req<Relationship[]>(`/relationships${toQS(params as Record<string, string | number | undefined>)}`),
   getQueueStatus: () => req<QueueStatus>("/queue"),
+  getProgress: (docId: number) => req<DocProgress>(`/progress/${docId}`),
 };

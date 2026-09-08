@@ -5,6 +5,7 @@ import UploadZone from "./components/UploadZone";
 import FactCard from "./components/FactCard";
 import EvidencePanel from "./components/EvidencePanel";
 import RelationshipsPanel from "./components/RelationshipsPanel";
+import DocProgressBar from "./components/DocProgressBar";
 
 type TabId = "facts" | "relationships";
 
@@ -74,11 +75,16 @@ export default function App() {
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
           {documents.map(doc => (
-            <span key={doc.id} title={doc.filename}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sea-50 border border-sea-100 text-xs text-sea-700">
-              <span className="w-1.5 h-1.5 rounded-full bg-sea-500 inline-block flex-shrink-0" />
-              <span className="max-w-[160px] truncate">{doc.filename?.replace(/\.pdf$/i, "")}</span>
-            </span>
+            <div key={doc.id} className="flex flex-col min-w-[120px] max-w-[200px]">
+              <span
+                title={doc.filename}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sea-50 border border-sea-100 text-xs text-sea-700"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-sea-500 inline-block flex-shrink-0" />
+                <span className="truncate">{doc.filename?.replace(/\.pdf$/i, "")}</span>
+              </span>
+              <DocProgressBar doc={doc} />
+            </div>
           ))}
         </div>
       </header>
