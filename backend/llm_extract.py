@@ -43,14 +43,24 @@ def _chat(prompt: str, max_tokens: int = 4096) -> str | None:
         try:
             r = httpx.post(COHERE_CHAT_URL, headers=headers, json=body, timeout=60)
             if r.status_code == 429:
-                wait = 30 * (attempt + 1)
+                wait = 60 * (attempt + 1)
                 print(f"[llm_extract] 429 rate limit, waiting {wait}s")
                 time.sleep(wait)
                 continue
             if not r.is_success:
-                print(f"[llm_extract] HTTP {r.status_code}: {r.text[:200]}")
+                print(f"[llm_extract] HTTP {r.status_code}: {r.text[:400]}")
                 return None
-            return r.json()["message"]["content"][0]["text"]
+            data = r.json()
+            # handle both v1 and v2 response shapes
+            if "message" in data:
+                return data["message"]["content"][0]["text"]
+            elif "text" in data:
+                return data["text"]
+            elif "generations" in data:
+                return data["generations"][0]["text"]
+            else:
+                print(f"[llm_extract] unexpected response shape: {str(data)[:200]}")
+                return None
         except Exception as e:
             print(f"[llm_extract] attempt {attempt+1}: {str(e)[:80]}")
             if attempt < 2:
@@ -69,14 +79,11 @@ _FACT_RE = re.compile(
 
 
 def _is_useful(chunk: Chunk) -> bool:
-    if len(chunk.text) < 80:  # raised from 50 — skip tiny fragments
+    if len(chunk.text) < 50:
         return False
     if chunk.chunk_type == "heading":
         return False
-    # must have a number AND a keyword to be fact-dense
-    has_number = bool(re.search(r"\d[\d,\.]+", chunk.text))
-    has_keyword = bool(_FACT_RE.search(chunk.text))
-    return has_number and has_keyword
+    return bool(re.search(r"\d[\d,\.]+", chunk.text)) or bool(_FACT_RE.search(chunk.text))
 
 
 def _dedupe_chunks(chunks: list[Chunk]) -> list[Chunk]:

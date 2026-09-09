@@ -107,6 +107,19 @@ async def ingest_from_path(body: dict):
     return {"status": "queued", "filepath": filepath}
 
 
+@app.delete("/documents/{doc_id}")
+def delete_document(doc_id: int):
+    conn = get_conn()
+    # delete relationships involving this doc's facts
+    conn.execute("DELETE FROM relationships WHERE fact_id_a IN (SELECT id FROM facts WHERE document_id=?) OR fact_id_b IN (SELECT id FROM facts WHERE document_id=?)", (doc_id, doc_id))
+    conn.execute("DELETE FROM facts WHERE document_id = ?", (doc_id,))
+    conn.execute("DELETE FROM progress WHERE document_id = ?", (doc_id,))
+    conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "deleted", "document_id": doc_id}
+
+
 @app.get("/documents")
 def list_documents():
     conn = get_conn()

@@ -256,9 +256,19 @@ export default function AppPage() {
                       <p className="text-sm font-semibold text-gray-900">{shortName(doc.filename??"")}</p>
                       <p className="text-xs text-gray-400 mt-0.5 font-mono truncate max-w-xs">{doc.filename}</p>
                     </div>
-                    <div className="text-right flex-shrink-0 ml-4">
-                      <p className="text-xs text-gray-400">{doc.page_count??0} pages</p>
-                      {doc.source_group && <p className="text-xs text-gray-300 mt-0.5">{doc.source_group}</p>}
+                    <div className="text-right flex-shrink-0 ml-4 flex items-center gap-3">
+                      <div>
+                        <p className="text-xs text-gray-400">{doc.page_count??0} pages</p>
+                        {doc.source_group && <p className="text-xs text-gray-300 mt-0.5">{doc.source_group}</p>}
+                      </div>
+                      <button
+                        onClick={async()=>{ if(confirm("Delete this document and all its facts?")){ await api.deleteDocument(doc.id); loadDocuments(); loadFacts(); }}}
+                        className="text-gray-300 hover:text-terra-500 transition-colors p-1 rounded"
+                        title="Delete document">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                          <path d="M3 4h10M6 4V3h4v1M5 4v8a1 1 0 001 1h4a1 1 0 001-1V4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      </button>
                     </div>
                   </div>
                   <DocProgressBar doc={doc}/>

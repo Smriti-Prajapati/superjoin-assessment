@@ -121,4 +121,5 @@ export const api = {
     req<Relationship[]>(`/relationships${toQS(params as Record<string, string | number | undefined>)}`),
   getQueueStatus: () => req<QueueStatus>("/queue"),
   getProgress: (docId: number) => req<DocProgress>(`/progress/${docId}`),
+  deleteDocument: (docId: number) => req<{ status: string }>(`/documents/${docId}`, { method: "DELETE" }),
 };
