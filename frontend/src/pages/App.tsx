@@ -61,9 +61,14 @@ export default function AppPage() {
   useEffect(()=>{ loadFacts(); },[loadFacts]);
   useEffect(()=>{ loadQueue(); },[loadQueue]);
   useEffect(()=>{
-    const id = setInterval(()=>{ loadDocuments(); loadQueue(); loadStats(); if(activeTab==="facts") loadFacts(); },5000);
+    const id = setInterval(()=>{
+      loadDocuments();
+      loadQueue();
+      loadStats();
+      loadFacts(); // always reload facts, not just when on facts tab
+    }, 4000);
     return ()=>clearInterval(id);
-  },[loadDocuments,loadFacts,loadQueue,loadStats,activeTab]);
+  },[loadDocuments,loadFacts,loadQueue,loadStats]);
 
   const uniqueSources = [...new Set(facts.map(f=>f.source_doc).filter(Boolean))];
   const uniqueTypes   = [...new Set(facts.map(f=>f.fact_type).filter(Boolean) as string[])];
