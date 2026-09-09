@@ -15,7 +15,7 @@ from extract_pdf import Chunk
 
 COHERE_API_KEY = os.environ.get("COHERE_API_KEY", "")
 COHERE_CHAT_URL = "https://api.cohere.com/v2/chat"
-MODEL = "command-r-plus"
+MODEL = "command-r-08-2024"
 
 # ── rate limiter (shared across extraction + reconciliation) ─────────────────
 _rl_lock = threading.Lock()
