@@ -15,7 +15,7 @@ from extract_pdf import Chunk
 
 COHERE_API_KEY = os.environ.get("COHERE_API_KEY", "")
 COHERE_CHAT_URL = "https://api.cohere.com/v2/chat"
-MODEL = "command-a-03-2025"
+MODEL = "command-r-plus"
 
 # ── rate limiter (shared across extraction + reconciliation) ─────────────────
 _rl_lock = threading.Lock()
@@ -51,6 +51,7 @@ def _chat(prompt: str, max_tokens: int = 4096) -> str | None:
                 print(f"[llm_extract] HTTP {r.status_code}: {r.text[:400]}")
                 return None
             data = r.json()
+            print(f"[llm_extract] response keys: {list(data.keys())}")
             # handle both v1 and v2 response shapes
             if "message" in data:
                 return data["message"]["content"][0]["text"]
@@ -59,7 +60,7 @@ def _chat(prompt: str, max_tokens: int = 4096) -> str | None:
             elif "generations" in data:
                 return data["generations"][0]["text"]
             else:
-                print(f"[llm_extract] unexpected response shape: {str(data)[:200]}")
+                print(f"[llm_extract] unexpected response shape: {str(data)[:400]}")
                 return None
         except Exception as e:
             print(f"[llm_extract] attempt {attempt+1}: {str(e)[:80]}")
