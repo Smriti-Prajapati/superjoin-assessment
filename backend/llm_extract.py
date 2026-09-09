@@ -192,6 +192,7 @@ def _extract_batch(chunks: list[Chunk], source_doc: str, doc_context: str) -> li
 
 def _parse_facts(raw: str, source_doc: str, chunks: list[Chunk]) -> list[dict]:
     try:
+        print(f"[llm_extract] raw response (first 300): {raw[:300]}")
         raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
         raw = re.sub(r"\s*```$", "", raw)
         m = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -200,16 +201,18 @@ def _parse_facts(raw: str, source_doc: str, chunks: list[Chunk]) -> list[dict]:
         data = json.loads(raw)
         out = []
         for fact in data.get("facts", []):
-            if not (fact.get("subject") and fact.get("evidence_snippet")
-                    and fact.get("confidence", 0) >= 0.5):
+            if not (fact.get("subject") and fact.get("evidence_snippet")):
+                continue
+            # accept any confidence, default to 0.7 if missing
+            if float(fact.get("confidence", 0.7)) < 0.4:
                 continue
             fact["source_doc"] = source_doc
             fact["page"] = _find_page(fact.get("evidence_snippet", ""), chunks)
             out.append(fact)
-        print(f"[llm_extract]   → {len(out)} facts")
+        print(f"[llm_extract]   → {len(out)} facts parsed")
         return out
     except Exception as e:
-        print(f"[llm_extract] parse error: {e} | snippet: {raw[:80]}")
+        print(f"[llm_extract] parse error: {e} | snippet: {raw[:200]}")
         return []
 
 
