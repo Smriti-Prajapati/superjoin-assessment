@@ -10,12 +10,17 @@ import os
 import re
 import time
 import threading
-import httpx
+import cohere
 from extract_pdf import Chunk
 
 COHERE_API_KEY = os.environ.get("COHERE_API_KEY", "")
-COHERE_CHAT_URL = "https://api.cohere.com/v2/chat"
 MODEL = "command-r-08-2024"
+
+def _get_client():
+    key = os.environ.get("COHERE_API_KEY", "")
+    if not key:
+        return None
+    return cohere.ClientV2(api_key=key)
 
 # ── rate limiter (shared across extraction + reconciliation) ─────────────────
 _rl_lock = threading.Lock()
@@ -33,37 +38,29 @@ def _rate_wait():
 
 
 def _chat(prompt: str, max_tokens: int = 4096) -> str | None:
-    """Single Cohere chat call with retry."""
+    """Single Cohere chat call using official SDK with retry."""
     _rate_wait()
-    headers = {"Authorization": f"Bearer {COHERE_API_KEY}", "Content-Type": "application/json"}
-    body = {"model": MODEL, "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": max_tokens, "temperature": 0.1}
-
+    client = _get_client()
+    if not client:
+        print("[llm_extract] no cohere client — missing API key")
+        return None
     for attempt in range(3):
         try:
-            r = httpx.post(COHERE_CHAT_URL, headers=headers, json=body, timeout=60)
-            if r.status_code == 429:
-                wait = 60 * (attempt + 1)
-                print(f"[llm_extract] 429 rate limit, waiting {wait}s")
-                time.sleep(wait)
-                continue
-            if not r.is_success:
-                print(f"[llm_extract] HTTP {r.status_code}: {r.text[:400]}")
-                return None
-            data = r.json()
-            print(f"[llm_extract] response keys: {list(data.keys())}")
-            # handle both v1 and v2 response shapes
-            if "message" in data:
-                return data["message"]["content"][0]["text"]
-            elif "text" in data:
-                return data["text"]
-            elif "generations" in data:
-                return data["generations"][0]["text"]
-            else:
-                print(f"[llm_extract] unexpected response shape: {str(data)[:400]}")
-                return None
+            res = client.chat(
+                model=MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=max_tokens,
+                temperature=0.1,
+            )
+            text = res.message.content[0].text
+            print(f"[llm_extract] response OK, len={len(text)}")
+            return text
+        except cohere.errors.TooManyRequestsError:
+            wait = 60 * (attempt + 1)
+            print(f"[llm_extract] 429 rate limit, waiting {wait}s")
+            time.sleep(wait)
         except Exception as e:
-            print(f"[llm_extract] attempt {attempt+1}: {str(e)[:80]}")
+            print(f"[llm_extract] attempt {attempt+1} error: {str(e)[:120]}")
             if attempt < 2:
                 time.sleep(5)
     return None
