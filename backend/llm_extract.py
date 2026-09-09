@@ -132,7 +132,7 @@ def extract_facts_from_chunks(
     chunks: list[Chunk],
     source_doc: str,
     doc_context: str = "",
-    batch_size: int = 50,
+    batch_size: int = 20,
     on_batch_done: callable = None,
     on_progress: callable = None,
 ) -> list[dict]:
@@ -192,19 +192,30 @@ def _extract_batch(chunks: list[Chunk], source_doc: str, doc_context: str) -> li
 
 def _parse_facts(raw: str, source_doc: str, chunks: list[Chunk]) -> list[dict]:
     try:
-        print(f"[llm_extract] raw response (first 300): {raw[:300]}")
+        print(f"[llm_extract] raw response (first 400): {raw[:400]}")
+        # strip markdown fences
         raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
-        raw = re.sub(r"\s*```$", "", raw)
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m:
-            raw = m.group(0)
+        raw = re.sub(r"\s*```\s*$", "", raw.strip())
+        raw = raw.strip()
+        # find the outermost JSON object
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start == -1 or end == 0:
+            print(f"[llm_extract] no JSON object found in response")
+            return []
+        raw = raw[start:end]
         data = json.loads(raw)
         out = []
         for fact in data.get("facts", []):
-            if not (fact.get("subject") and fact.get("evidence_snippet")):
+            if not fact.get("subject"):
                 continue
-            # accept any confidence, default to 0.7 if missing
-            if float(fact.get("confidence", 0.7)) < 0.4:
+            if not fact.get("evidence_snippet"):
+                continue
+            try:
+                conf = float(fact.get("confidence", 0.7))
+            except (TypeError, ValueError):
+                conf = 0.7
+            if conf < 0.4:
                 continue
             fact["source_doc"] = source_doc
             fact["page"] = _find_page(fact.get("evidence_snippet", ""), chunks)
@@ -212,7 +223,7 @@ def _parse_facts(raw: str, source_doc: str, chunks: list[Chunk]) -> list[dict]:
         print(f"[llm_extract]   → {len(out)} facts parsed")
         return out
     except Exception as e:
-        print(f"[llm_extract] parse error: {e} | snippet: {raw[:200]}")
+        print(f"[llm_extract] parse error: {e} | raw[:300]: {raw[:300]}")
         return []
 
 
