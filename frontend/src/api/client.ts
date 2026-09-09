@@ -1,12 +1,18 @@
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "https://factlens-backend-n5mi.onrender.com";
 
 async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, opts);
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`${res.status} ${text}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000); // 60s timeout
+  try {
+    const res = await fetch(`${BASE}${path}`, { ...opts, signal: controller.signal });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`${res.status} ${text}`);
+    }
+    return res.json() as Promise<T>;
+  } finally {
+    clearTimeout(timeout);
   }
-  return res.json() as Promise<T>;
 }
 
 export interface Document {

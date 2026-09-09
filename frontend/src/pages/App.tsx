@@ -65,8 +65,8 @@ export default function AppPage() {
       loadDocuments();
       loadQueue();
       loadStats();
-      loadFacts(); // always reload facts, not just when on facts tab
-    }, 4000);
+      loadFacts();
+    }, 8000); // 8s — less hammering on free tier
     return ()=>clearInterval(id);
   },[loadDocuments,loadFacts,loadQueue,loadStats]);
 
