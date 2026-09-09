@@ -20,7 +20,7 @@ MODEL = "command-a-03-2025"
 # ── rate limiter (shared across extraction + reconciliation) ─────────────────
 _rl_lock = threading.Lock()
 _last_call: float = 0.0
-MIN_INTERVAL = 3.5   # Cohere free tier: ~20 calls/min, 3.5s is safe
+MIN_INTERVAL = 2.5   # Cohere free tier: ~20 calls/min
 
 
 def _rate_wait():
@@ -69,11 +69,14 @@ _FACT_RE = re.compile(
 
 
 def _is_useful(chunk: Chunk) -> bool:
-    if len(chunk.text) < 50:
+    if len(chunk.text) < 80:  # raised from 50 — skip tiny fragments
         return False
     if chunk.chunk_type == "heading":
         return False
-    return bool(re.search(r"\d[\d,\.]+", chunk.text)) or bool(_FACT_RE.search(chunk.text))
+    # must have a number AND a keyword to be fact-dense
+    has_number = bool(re.search(r"\d[\d,\.]+", chunk.text))
+    has_keyword = bool(_FACT_RE.search(chunk.text))
+    return has_number and has_keyword
 
 
 def _dedupe_chunks(chunks: list[Chunk]) -> list[Chunk]:
@@ -121,7 +124,7 @@ def extract_facts_from_chunks(
     chunks: list[Chunk],
     source_doc: str,
     doc_context: str = "",
-    batch_size: int = 30,
+    batch_size: int = 50,
     on_batch_done: callable = None,
     on_progress: callable = None,
 ) -> list[dict]:

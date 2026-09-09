@@ -90,7 +90,7 @@ def ingest_document(filepath: str) -> dict:
                 vecs = embed_texts(texts[i : i + batch_size])
                 all_vecs.extend(vecs)
                 if i + batch_size < len(texts):
-                    time.sleep(1.2)
+                    time.sleep(0.5)
 
             for fact, vec in zip(stored_facts, all_vecs):
                 import pickle, numpy as np
